@@ -6,6 +6,8 @@ import asyncio
 import logging
 import os
 import re
+import shutil
+import sys
 import time
 from typing import Any
 
@@ -26,7 +28,41 @@ _DOWNLOAD_LOCKS: dict[str, asyncio.Lock] = {}
 CACHE_TTL = 900  # 15 minutes
 MAX_CACHED_FILES = 10
 AUDIO_EXTS = (".m4a", ".mp3", ".webm", ".mp4", ".ogg", ".opus")
-JSLESS_CLIENTS = ["visionos", "android_vr", "ios"]
+JSLESS_CLIENTS = ["visionos"]
+
+
+def _find_node_binary() -> str | None:
+    """Locate a Node.js executable from PATH, venv, or nodejs-wheel."""
+    for candidate in (
+        shutil.which("node"),
+        os.path.join(os.path.dirname(sys.executable), "node"),
+    ):
+        if candidate and os.path.isfile(candidate):
+            return candidate
+
+    try:
+        import nodejs_wheel  # type: ignore[import-not-found]
+    except ImportError:
+        return None
+
+    wheel_dir = os.path.dirname(nodejs_wheel.__file__)
+    for rel_path in (os.path.join("bin", "node"), "node", "node.exe"):
+        candidate = os.path.join(wheel_dir, rel_path)
+        if os.path.isfile(candidate):
+            return candidate
+    return None
+
+
+def _get_js_runtime_opts() -> dict[str, dict[str, str]]:
+    """Build yt-dlp js_runtimes config from available JS executables."""
+    runtimes: dict[str, dict[str, str]] = {}
+    if deno_path := shutil.which("deno"):
+        runtimes["deno"] = {"path": deno_path}
+    if node_path := _find_node_binary():
+        runtimes["node"] = {"path": node_path}
+    if qjs_path := shutil.which("qjs"):
+        runtimes["quickjs"] = {"path": qjs_path}
+    return runtimes
 
 
 def clear_stream_cache() -> None:
@@ -42,7 +78,7 @@ class _YtdlpLogger:
             _LOGGER.debug("yt-dlp: %s", msg)
 
     def warning(self, msg: str) -> None:
-        _LOGGER.debug("yt-dlp warning: %s", msg)
+        _LOGGER.warning("yt-dlp warning: %s", msg)
 
     def error(self, msg: str) -> None:
         _LOGGER.error("yt-dlp error: %s", msg)
@@ -148,6 +184,33 @@ class YouTubeStreamView(HomeAssistantView):
             headers["Content-Length"] = str(os.path.getsize(cached[0]))
         return web.Response(status=200, headers=headers)
 
+    def _build_ydl_opts(
+        self,
+        cookie_str: str | None,
+        audio_format: str,
+        *,
+        use_cookies: bool,
+        player_clients: list[str] | None,
+        extra_opts: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Assemble common yt-dlp options including cookies, clients, and JS runtime."""
+        ydl_opts: dict[str, Any] = {
+            "quiet": True,
+            "no_warnings": False,
+            "logger": _YtdlpLogger(),
+            "format": audio_format,
+            "noplaylist": True,
+        }
+        if js_runtimes := _get_js_runtime_opts():
+            ydl_opts["js_runtimes"] = js_runtimes
+        if use_cookies and cookie_str:
+            ydl_opts.update(get_ydl_cookie_opts(self.hass, cookie_str))
+        if player_clients:
+            ydl_opts["extractor_args"] = {"youtube": {"player_client": player_clients}}
+        if extra_opts:
+            ydl_opts.update(extra_opts)
+        return ydl_opts
+
     async def _extract_info(
         self,
         video_id: str,
@@ -159,18 +222,13 @@ class YouTubeStreamView(HomeAssistantView):
     ) -> dict[str, Any] | None:
         """Extract stream info using yt-dlp."""
         def _extract() -> dict[str, Any] | None:
-            ydl_opts: dict[str, Any] = {
-                "quiet": True,
-                "no_warnings": False,
-                "logger": _YtdlpLogger(),
-                "format": audio_format,
-                "skip_download": True,
-                "noplaylist": True,
-            }
-            if use_cookies and cookie_str:
-                ydl_opts.update(get_ydl_cookie_opts(self.hass, cookie_str))
-            if player_clients:
-                ydl_opts["extractor_args"] = {"youtube": {"player_client": player_clients}}
+            ydl_opts = self._build_ydl_opts(
+                cookie_str,
+                audio_format,
+                use_cookies=use_cookies,
+                player_clients=player_clients,
+                extra_opts={"skip_download": True},
+            )
 
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 try:
@@ -269,19 +327,13 @@ class YouTubeStreamView(HomeAssistantView):
                 os.makedirs(cache_dir, exist_ok=True)
                 _cleanup_cache(cache_dir)
                 outtmpl = os.path.join(cache_dir, f"{video_id}.%(ext)s")
-                ydl_opts: dict[str, Any] = {
-                    "quiet": True,
-                    "no_warnings": False,
-                    "logger": _YtdlpLogger(),
-                    "format": audio_format,
-                    "outtmpl": outtmpl,
-                    "noplaylist": True,
-                    "overwrites": True,
-                }
-                if use_cookies and cookie_str:
-                    ydl_opts.update(get_ydl_cookie_opts(self.hass, cookie_str))
-                if player_clients:
-                    ydl_opts["extractor_args"] = {"youtube": {"player_client": player_clients}}
+                ydl_opts = self._build_ydl_opts(
+                    cookie_str,
+                    audio_format,
+                    use_cookies=use_cookies,
+                    player_clients=player_clients,
+                    extra_opts={"outtmpl": outtmpl, "overwrites": True},
+                )
 
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                     try:

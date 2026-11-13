@@ -7,6 +7,9 @@
   "integration_type": "service",
   "iot_class": "cloud_polling",
   "issue_tracker": "https://github.com/shenwii/ytube_player/issues",
-  "requirements": ["yt-dlp>=2024.08.06"],
+  "requirements": [
+    "yt-dlp[default]>=2026.1.0",
+    "nodejs-wheel>=22.13.1; platform_machine == 'x86_64' or platform_machine == 'aarch64' or platform_machine == 'arm64' or platform_machine == 'AMD64'"
+  ],
   "version": "1.0.0"
 }
