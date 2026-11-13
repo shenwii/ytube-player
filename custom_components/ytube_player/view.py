@@ -9,6 +9,7 @@ from typing import Any
 from aiohttp import web
 from homeassistant.components.http import HomeAssistantView
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 import yt_dlp
 
 from .const import CONF_AUDIO_FORMAT, CONF_COOKIES, DEFAULT_AUDIO_FORMAT, DOMAIN
@@ -131,7 +132,7 @@ class YouTubeStreamView(HomeAssistantView):
             upstream_headers["Range"] = request.headers["range"]
 
         # Proxy the stream using Home Assistant aiohttp client session
-        session = self.hass.helpers.aiohttp_client.async_get_clientsession()
+        session = async_get_clientsession(self.hass)
         try:
             async with session.get(direct_url, headers=upstream_headers) as upstream_resp:
                 response = web.StreamResponse(
