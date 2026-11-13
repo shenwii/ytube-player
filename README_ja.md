@@ -102,23 +102,15 @@ data:
   media_content_type: music
 ```
 
-### 3. MCP（`ha-mcp` 等）・AI エージェント・スクリプトでの利用
+### 3. MCP・AI エージェントでの利用
 
-本インテグレーションは `media_player` エンティティではなく `MediaSource`（メディアソース）として動作するため、標準の `media_player.search_media` や音声インテントからは自動検索されません。用途に応じて以下の 2 通りを利用できます。
+本インテグレーションは `media_player` エンティティではなく `MediaSource`（メディアソース）として動作するため、標準の `media_player.search_media` や音声インテントからは自動検索されません：
 
-- **方法 1：検索即再生（`ha-mcp` などのサービス呼び出し対応 MCP 向け・推奨）**
-  AI から直接 `media_player.play_media` を呼び出し、`media_content_id` に `"media-source://ytube_player/search?q=検索キーワード"`、`media_content_type` に `"music"` を指定すると、最初に再生可能な結果を自動再生します。
-
-- **方法 2：先に検索結果一覧を取得してから選んで再生（`ytube_player.search` / `browse_media`）**
-  候補一覧を取得して選びたい場合は、本インテグレーションの `ytube_player.search` アクションを呼び出します（各候補の `id`、`title`、`media_content_id`、`url`、`thumbnail` を返します）。その後、選んだ項目の `media_content_id` を `media_player.play_media` に渡してください：
-  ```yaml
-  action: ytube_player.search
-  data:
-    query: "YOASOBI アイドル"
-    limit: 5
-  response_variable: yt_results
-  ```
-  *（`media_player.browse_media` で `media_content_id: "media-source://ytube_player/search?q=YOASOBI アイドル"` を指定して一覧を取得することも可能です。）*
+- **`media_player.play_media` を使った検索即再生（推奨）**：
+  MCP や AI エージェントから `media_player.play_media` を呼び出せる場合は、対象スピーカーに対して `media_content_id` に `"media-source://ytube_player/search?q=検索キーワード"`、`media_content_type` に `"music"` を渡すだけで、最初に再生可能な結果を自動再生します。
+- **HA スクリプト経由での公開（ツール制限のある MCP / Assist 向け）**：
+  利用中の MCP 側で任意の `media-source://` URI を渡しにくい場合は、上記 `media_player.play_media` を呼び出す Home Assistant スクリプトを作成し、Assist / MCP に公開してください。
+  *（`media_player.browse_media` を使う場合は、`media_content_id: "media-source://ytube_player/search?q=検索キーワード"` で検索結果一覧を取得することもできます。）*
 
 ---
 

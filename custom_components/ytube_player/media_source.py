@@ -209,8 +209,6 @@ async def async_search_playable_videos(
                             "id": video_id,
                             "title": entry.get("title", "Unknown"),
                             "thumbnail": thumb,
-                            "media_content_id": f"media-source://{DOMAIN}/{video_id}",
-                            "url": f"https://www.youtube.com/watch?v={video_id}",
                         }
                     )
                     if len(results) >= limit:

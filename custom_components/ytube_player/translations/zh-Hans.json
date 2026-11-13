@@ -22,21 +22,5 @@
         }
       }
     }
-  },
-  "services": {
-    "search": {
-      "name": "搜索 YouTube",
-      "description": "搜索 YouTube 可播放音频并返回包含 media_content_id 的结果列表。",
-      "fields": {
-        "query": {
-          "name": "搜索关键词",
-          "description": "要搜索的歌手、歌名或播客关键词。"
-        },
-        "limit": {
-          "name": "返回数量上限",
-          "description": "最多返回多少条搜索结果（默认使用集成选项设置）。"
-        }
-      }
-    }
   }
 }
