@@ -40,6 +40,11 @@ _LOGGER = logging.getLogger(__name__)
 def extract_youtube_video_id(url_or_id: str) -> str | None:
     """Extract YouTube 11-char video ID from URL or string if present."""
     url_or_id = url_or_id.strip()
+    for ext in (".m4a", ".mp4", ".mp3", ".webm"):
+        if url_or_id.endswith(ext):
+            url_or_id = url_or_id[:-len(ext)]
+            break
+
     if re.match(r"^[a-zA-Z0-9_-]{11}$", url_or_id):
         return url_or_id
 
@@ -209,7 +214,7 @@ class YouTubeMediaSource(MediaSource):
             raise Unresolvable(f"Could not resolve video ID for: {raw_identifier}")
 
         base_url = get_url(self.hass, prefer_external=False)
-        play_url = f"{base_url}/api/ytube_player/stream/{video_id}"
+        play_url = f"{base_url}/api/ytube_player/stream/{video_id}.m4a"
 
         return PlayMedia(url=play_url, mime_type="audio/mp4")
 

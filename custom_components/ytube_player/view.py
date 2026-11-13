@@ -32,10 +32,30 @@ class YouTubeStreamView(HomeAssistantView):
         """Initialize the stream view."""
         self.hass = hass
 
+    def _clean_video_id(self, video_id: str) -> str:
+        """Strip audio file extensions like .m4a from video_id."""
+        cleaned = video_id.strip()
+        for ext in (".m4a", ".mp4", ".mp3", ".webm"):
+            if cleaned.endswith(ext):
+                return cleaned[:-len(ext)]
+        return cleaned
+
+    async def head(self, request: web.Request, video_id: str) -> web.Response:
+        """Handle pre-flight HEAD requests from smart speakers like Sonos."""
+        return web.Response(
+            status=200,
+            headers={
+                "Content-Type": "audio/mp4",
+                "Accept-Ranges": "bytes",
+            },
+        )
+
     async def get(self, request: web.Request, video_id: str) -> web.StreamResponse:
         """Stream the audio for the given video_id."""
         if not video_id:
             return web.Response(status=400, text="Missing video_id")
+
+        video_id = self._clean_video_id(video_id)
 
         # Get integration options/config
         domain_data = self.hass.data.get(DOMAIN, {})
@@ -82,10 +102,16 @@ class YouTubeStreamView(HomeAssistantView):
 
         direct_url = info["url"]
         content_type = info.get("ext")
+
+        # Always enforce an audio/* MIME type!
+        # YouTube CDN upstream returns "video/mp4" for DASH format 140, which causes
+        # audio-only speakers like Sonos to reject the stream with "UPnP Error 714: Illegal MIME-Type".
         if content_type == "m4a":
             mime_type = "audio/mp4"
         elif content_type in ("webm", "opus"):
             mime_type = "audio/webm"
+        elif content_type == "mp3":
+            mime_type = "audio/mpeg"
         else:
             mime_type = "audio/mp4"
 
@@ -111,7 +137,7 @@ class YouTubeStreamView(HomeAssistantView):
                 response = web.StreamResponse(
                     status=upstream_resp.status,
                     headers={
-                        "Content-Type": upstream_resp.headers.get("Content-Type", mime_type),
+                        "Content-Type": mime_type,
                         "Accept-Ranges": "bytes",
                     },
                 )

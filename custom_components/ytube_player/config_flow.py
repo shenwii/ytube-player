@@ -58,15 +58,11 @@ class YouTubePlayerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         config_entry: config_entries.ConfigEntry,
     ) -> YouTubePlayerOptionsFlow:
         """Get the options flow for this handler."""
-        return YouTubePlayerOptionsFlow(config_entry)
+        return YouTubePlayerOptionsFlow()
 
 
 class YouTubePlayerOptionsFlow(config_entries.OptionsFlow):
     """Handle options flow for YouTube Player."""
-
-    def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
-        """Initialize options flow."""
-        self.config_entry = config_entry
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
