@@ -1,0 +1,12 @@
+{
+  "domain": "ytube_player",
+  "name": "YouTube Player",
+  "codeowners": ["@shenwii"],
+  "config_flow": true,
+  "documentation": "https://github.com/shenwii/ytube_player",
+  "integration_type": "service",
+  "iot_class": "cloud_polling",
+  "issue_tracker": "https://github.com/shenwii/ytube_player/issues",
+  "requirements": ["yt-dlp>=2024.08.06"],
+  "version": "1.0.0"
+}

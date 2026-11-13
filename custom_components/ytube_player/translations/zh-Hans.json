@@ -1,0 +1,29 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "YouTube 播放器",
+        "description": "配置 YouTube 媒体源插件。您可以填入 YouTube Cookies，用于跳过人机验证并访问会员/受限内容（可留空）。",
+        "data": {
+          "cookies": "YouTube Cookies（支持 Cookie 请求头字符串或 Netscape 文本）"
+        }
+      }
+    },
+    "abort": {
+      "already_configured": "YouTube 播放器已经配置过了。"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "YouTube 播放器选项",
+        "description": "修改 YouTube 播放器配置，更新 Cookies 或调整搜索选项。",
+        "data": {
+          "cookies": "YouTube Cookies",
+          "max_search_results": "搜索最大返回结果数",
+          "audio_format": "yt-dlp 音频格式选择器"
+        }
+      }
+    }
+  }
+}
