@@ -65,6 +65,27 @@ def _get_js_runtime_opts() -> dict[str, dict[str, str]]:
     return runtimes
 
 
+def _log_runtime_diagnostics(video_id: str) -> None:
+    """Log yt-dlp environment details when all stream/download attempts fail."""
+    yt_dlp_ver = getattr(getattr(yt_dlp, "version", None), "__version__", "unknown")
+    try:
+        import yt_dlp.dependencies as ydl_deps
+
+        ejs_mod = getattr(ydl_deps, "yt_dlp_ejs", None)
+        ejs_ver = getattr(ejs_mod, "__version__", bool(ejs_mod))
+    except Exception:
+        ejs_ver = "unknown"
+    _LOGGER.error(
+        "All attempts to stream or download YouTube audio failed for %s "
+        "(yt-dlp=%s, ejs=%s, js_runtimes=%s, ffmpeg=%s)",
+        video_id,
+        yt_dlp_ver,
+        ejs_ver,
+        _get_js_runtime_opts(),
+        shutil.which("ffmpeg"),
+    )
+
+
 def clear_stream_cache() -> None:
     """Clear the in-memory stream URL cache."""
     _STREAM_CACHE.clear()
@@ -200,6 +221,7 @@ class YouTubeStreamView(HomeAssistantView):
             "logger": _YtdlpLogger(),
             "format": audio_format,
             "noplaylist": True,
+            "remote_components": ["ejs:github"],
         }
         if js_runtimes := _get_js_runtime_opts():
             ydl_opts["js_runtimes"] = js_runtimes
@@ -323,16 +345,24 @@ class YouTubeStreamView(HomeAssistantView):
             if cached:
                 return cached
 
-            def _run_download(use_cookies: bool, player_clients: list[str] | None) -> tuple[str, str] | None:
+            def _run_download(
+                use_cookies: bool,
+                player_clients: list[str] | None,
+                fmt: str,
+                postprocessors: list[dict[str, str]] | None,
+            ) -> tuple[str, str] | None:
                 os.makedirs(cache_dir, exist_ok=True)
                 _cleanup_cache(cache_dir)
                 outtmpl = os.path.join(cache_dir, f"{video_id}.%(ext)s")
+                extra_opts: dict[str, Any] = {"outtmpl": outtmpl, "overwrites": True}
+                if postprocessors:
+                    extra_opts["postprocessors"] = postprocessors
                 ydl_opts = self._build_ydl_opts(
                     cookie_str,
-                    audio_format,
+                    fmt,
                     use_cookies=use_cookies,
                     player_clients=player_clients,
-                    extra_opts={"outtmpl": outtmpl, "overwrites": True},
+                    extra_opts=extra_opts,
                 )
 
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -341,24 +371,35 @@ class YouTubeStreamView(HomeAssistantView):
                         return _find_cached_file(cache_dir, video_id)
                     except Exception as err:
                         _LOGGER.warning(
-                            "yt-dlp download failed for %s (cookies=%s, clients=%s): %s",
+                            "yt-dlp download failed for %s (cookies=%s, clients=%s, format=%s): %s",
                             video_id,
                             use_cookies,
                             player_clients,
+                            fmt,
                             err,
                         )
                         return None
 
-            # Try with configured cookies first, then fallback to JS-less clients without cookies
-            attempts: list[tuple[bool, list[str] | None]] = []
+            # Try configured format first, then fallback to bestaudio transcoded to m4a via ffmpeg
+            has_ffmpeg = bool(shutil.which("ffmpeg"))
+            m4a_pp = (
+                [{"key": "FFmpegExtractAudio", "preferredcodec": "m4a"}]
+                if has_ffmpeg
+                else None
+            )
+            attempts: list[tuple[bool, list[str] | None, str, list[dict[str, str]] | None]] = []
             if cookie_str:
-                attempts.append((True, None))
-            attempts.append((False, None))
-            attempts.append((False, JSLESS_CLIENTS))
+                attempts.append((True, None, audio_format, None))
+            attempts.append((False, None, audio_format, None))
+            attempts.append((False, JSLESS_CLIENTS, audio_format, None))
+            if has_ffmpeg and audio_format != "bestaudio/best":
+                if cookie_str:
+                    attempts.append((True, None, "bestaudio/best", m4a_pp))
+                attempts.append((False, JSLESS_CLIENTS, "bestaudio/best", m4a_pp))
 
-            for use_cookies, clients in attempts:
+            for use_cookies, clients, fmt, postprocessors in attempts:
                 result = await self.hass.async_add_executor_job(
-                    _run_download, use_cookies, clients
+                    _run_download, use_cookies, clients, fmt, postprocessors
                 )
                 if result:
                     return result
@@ -428,5 +469,5 @@ class YouTubeStreamView(HomeAssistantView):
                 headers={"Content-Type": _mime_for_ext(ext)},
             )
 
-        _LOGGER.error("All attempts to stream or download YouTube audio failed for %s", video_id)
+        _log_runtime_diagnostics(video_id)
         return web.Response(status=502, text="Could not stream or download audio from YouTube")
