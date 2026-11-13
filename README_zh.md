@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="brands/logo.png" alt="YouTube Player Logo" width="480">
+</p>
+
 # YouTube Player for Home Assistant
 
 [English](README.md) | [中文](README_zh.md) | [日本語](README_ja.md)
