@@ -185,6 +185,7 @@ def _build_ydl_opts(
         "logger": _YtdlpLogger(),
         "format": audio_format,
         "noplaylist": True,
+        "concurrent_fragment_downloads": 4,
         "remote_components": ["ejs:github"],
     }
     if js_runtimes := _get_js_runtime_opts():

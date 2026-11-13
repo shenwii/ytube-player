@@ -36,21 +36,9 @@ class YouTubePlayerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._abort_if_unique_id_configured()
 
         if user_input is not None:
-            # Save cookies to disk if provided
-            cookies = user_input.get(CONF_COOKIES, "")
-            cookie_path = get_cookie_file_path(self.hass)
-            await self.hass.async_add_executor_job(
-                sync_save_cookie_file, cookie_path, cookies
-            )
-            return self.async_create_entry(title="YouTube Player", data=user_input)
+            return self.async_create_entry(title="YouTube Player", data={})
 
-        schema = vol.Schema(
-            {
-                vol.Optional(CONF_COOKIES, default=""): str,
-            }
-        )
-
-        return self.async_show_form(step_id="user", data_schema=schema)
+        return self.async_show_form(step_id="user", data_schema=vol.Schema({}))
 
     @staticmethod
     @callback

@@ -3,10 +3,7 @@
     "step": {
       "user": {
         "title": "YouTube Player",
-        "description": "Configure YouTube Player media source. You can optionally paste your YouTube cookies to bypass bot checks or access age-restricted/member content.",
-        "data": {
-          "cookies": "YouTube Cookies (Header string or Netscape format)"
-        }
+        "description": "Ready to set up YouTube Player. No login or cookies are required for normal playback. If needed later (for bot checks or age-restricted/member content), you can configure optional YouTube cookies in the integration's Options menu."
       }
     },
     "abort": {

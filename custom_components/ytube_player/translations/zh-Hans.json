@@ -3,10 +3,7 @@
     "step": {
       "user": {
         "title": "YouTube 播放器",
-        "description": "配置 YouTube 媒体源插件。您可以填入 YouTube Cookies，用于跳过人机验证并访问会员/受限内容（可留空）。",
-        "data": {
-          "cookies": "YouTube Cookies（支持 Cookie 请求头字符串或 Netscape 文本）"
-        }
+        "description": "直接点击提交即可完成安装，常规播放无需登录或填写 Cookies。若日后遇到人机验证或需要收听会员/年龄限制内容，可在集成的「选项」中补充配置 Cookies。"
       }
     },
     "abort": {

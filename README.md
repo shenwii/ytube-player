@@ -21,7 +21,7 @@ Designed specifically for listening to YouTube content (music, podcasts, intervi
   - **Fast Playback with In-Memory Caching**: Resolves stream URLs with a 15-minute TTL cache, eliminating duplicate lookups when speakers perform initial HEAD/Range byte-probe requests.
 - **Search in Media Browser**: Search YouTube directly using the search bar within Home Assistant's Media Browser UI and click to play.
 - **Instant Search & Play (Automations & Voice Assistants)**: Trigger playback with raw keywords, automatically extracting and playing the first matching result (e.g., `media-source://ytube_player/search?q=Song Name`).
-- **Custom Cookies Support**: Easily paste YouTube cookies in integration settings (raw `key=val;` string, HTTP header, or Netscape format) to bypass bot verification and access age-restricted or membership content.
+- **Zero-Config Ready (Optional Cookies)**: Works out of the box with no YouTube login required for most public audio. Optional cookies can still be configured in Options (raw `key=val;` string, HTTP header, or Netscape format) to bypass IP bot checks or access age-restricted/membership content.
 
 ---
 
@@ -45,9 +45,8 @@ Designed specifically for listening to YouTube content (music, podcasts, intervi
 
 1. In Home Assistant, go to **Settings** -> **Devices & Services**.
 2. Click **Add Integration** in the bottom right corner and search for **`YouTube Player`**.
-3. Fill in the optional settings:
-   - **YouTube Cookies** (Optional): Paste your browser cookie string (e.g., `SEARCH_SAMESITE=CgQIoqIB; ...`).
-4. Click Submit. You can update cookies or adjust max search results at any time via the integration's **Configure / Options** menu without restarting HA.
+3. Click **Submit** — no login or cookies are required for normal playback.
+4. *(Optional)* If needed later, you can open the integration's **Configure / Options** menu at any time to adjust max search results, audio format selector, or paste YouTube cookies without restarting HA.
 
 ---
 
@@ -105,14 +104,18 @@ data:
 
 ---
 
-## ⚠️ Limitations
+## ⚠️ Limitations & Scope
 
-- **No Live Streams or 24/7 Radios**: To ensure reliable playback on smart speakers (such as Sonos, HomePod, and DLNA) that require `Content-Length` and byte-range requests (`Accept-Ranges`), audio streams are downloaded and cached locally before playback. Live streams, 24/7 radio broadcasts, and upcoming premieres cannot be played and are **automatically excluded from search results** (past live VODs that have already ended are supported).
+- **Download-Before-Play Buffering Delay**: To ensure reliable playback on smart speakers (such as Sonos, HomePod, and DLNA) that require `Content-Length` and byte-range requests (`Accept-Ranges`), audio is downloaded and cached locally before playback starts. Therefore, the first playback of an uncached item requires waiting for the download to finish (startup time depends on your network speed and audio duration; long videos or podcasts may take noticeable time, while subsequent plays of cached items start immediately).
+- **No Live Streams or 24/7 Radios**: Because complete audio files are cached before serving, ongoing live streams, 24/7 radio broadcasts, and upcoming premieres cannot be played and are **automatically excluded from search results** (past live VODs that have already ended are supported).
 - **No Playlists or YouTube Mixes**: Playlists, YouTube Mix/Radio collections, and channels are **not supported** and are automatically filtered out from search results. When using instant search & play (`search?q=...`), the integration automatically skips live streams and playlists and plays the first playable single video.
+- **Best-Effort Availability (No SLA / High-Availability Guarantee)**: Due to YouTube's rate limiting, anti-bot mechanisms, and upstream changes, this project **does not guarantee high availability or uninterrupted service**. It is designed purely as a lightweight, best-effort solution to meet the bare-minimum need of playing YouTube audio at home.
 
 ---
 
-## 🍪 How to Obtain YouTube Cookies
+## 🍪 How to Obtain YouTube Cookies *(Optional / Advanced)*
+
+> Most users do **not** need cookies. Only configure this in the integration's **Options** menu if your server IP triggers YouTube bot verification or if you need to play age-restricted / membership-only videos.
 
 1. In a desktop browser (Chrome, Edge, Firefox, etc.), open [YouTube](https://www.youtube.com) and log in to your account.
 2. Press `F12` to open Developer Tools and switch to the **Network** tab.
