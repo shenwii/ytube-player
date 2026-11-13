@@ -8,6 +8,7 @@ from typing import Any
 from homeassistant import config_entries
 from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowResult
+from homeassistant.helpers import selector
 import voluptuous as vol
 
 from .const import (
@@ -71,7 +72,9 @@ class YouTubePlayerOptionsFlow(config_entries.OptionsFlow):
                 vol.Optional(
                     CONF_COOKIES,
                     default=current_config.get(CONF_COOKIES, ""),
-                ): str,
+                ): selector.TextSelector(
+                    selector.TextSelectorConfig(multiline=True)
+                ),
                 vol.Optional(
                     CONF_MAX_SEARCH_RESULTS,
                     default=current_config.get(

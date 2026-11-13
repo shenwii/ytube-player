@@ -117,12 +117,11 @@ data:
 
 > Most users do **not** need cookies. Only configure this in the integration's **Options** menu if your server IP triggers YouTube bot verification or if you need to play age-restricted / membership-only videos.
 
-1. In a desktop browser (Chrome, Edge, Firefox, etc.), open [YouTube](https://www.youtube.com) and log in to your account.
-2. Press `F12` to open Developer Tools and switch to the **Network** tab.
-3. Refresh the page and click on any network request made to `youtube.com`.
-4. In the **Request Headers** section on the right, find the `Cookie:` entry.
-5. Copy its value (e.g. `SEARCH_SAMESITE=CgQIoqIB; ...`) and paste it into this integration's Cookies field.
-*(Note: Netscape-formatted text exported from browser extensions such as "Get cookies.txt LOCALLY" is also supported).*
+1. Install the **Get cookies.txt LOCALLY** browser extension (available for Chrome / Edge, or an equivalent Netscape cookie exporter for Firefox).
+2. Open [YouTube](https://www.youtube.com) in your browser and make sure you are logged in.
+3. Click the **Get cookies.txt LOCALLY** extension icon and click **Export** (or **Copy**) to copy/download the Netscape-formatted cookies text.
+4. Open the text, copy its entire content, and paste it into the **YouTube Cookies** field in this integration's **Options** menu.
+*(Note: Raw browser `Cookie:` header strings like `SEARCH_SAMESITE=...;` are also supported).*
 
 ---
 

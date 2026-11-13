@@ -117,12 +117,11 @@ data:
 
 > 绝大多数用户**无需配置 Cookies**。仅当你所在的服务器 IP 触发了 YouTube 人机验证，或需要播放会员/年龄限制内容时，才需要按下方步骤获取并在集成「**选项**」中填入。
 
-1. 在电脑浏览器（如 Chrome / Edge / Firefox）上打开 [YouTube](https://www.youtube.com) 并登录账号。
-2. 按 `F12` 打开开发者工具，切换到 **网络（Network）** 标签页。
-3. 刷新页面，点击任意一个对 `youtube.com` 的网络请求。
-4. 在右侧 **请求标头（Request Headers）** 中找到 `Cookie:` 字段。
-5. 复制该值（例如 `SEARCH_SAMESITE=CgQIoqIB; ...`），粘贴到本插件的 Cookies 设置框中即可。
-*(提示：使用 Chrome 扩展如 "Get cookies.txt LOCALLY" 导出的 Netscape 格式文本同样支持直接粘贴。)*
+1. 在电脑浏览器（Chrome / Edge）中安装 **Get cookies.txt LOCALLY** 扩展（Firefox 可使用同类 Netscape 格式 Cookie 导出扩展）。
+2. 在浏览器中打开 [YouTube](https://www.youtube.com) 并确保已登录账号。
+3. 点击浏览器右上角的 **Get cookies.txt LOCALLY** 扩展图标，点击 **Export**（导出）或 **Copy**（复制）获取 Netscape 格式的 Cookies 文本。
+4. 全选复制导出的文本内容，打开本集成的「**选项（Options）**」，粘贴到 **YouTube Cookies** 输入框中保存即可。
+*(提示：也同样支持直接粘贴浏览器请求头中的 `Cookie:` 字符串。)*
 
 ---
 

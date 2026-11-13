@@ -25,11 +25,11 @@ def cookie_string_to_netscape(cookie_str: str) -> str:
     if not cookie_str or not cookie_str.strip():
         return ""
 
-    cleaned = cookie_str.strip()
+    cleaned = cookie_str.replace("\r\n", "\n").replace("\r", "\n").strip()
 
     # If already in Netscape format
     if "# Netscape" in cleaned or "\t" in cleaned:
-        return cleaned
+        return cleaned + "\n"
 
     # Strip leading 'Cookie:' or 'cookie:' if user pasted the entire header line
     if cleaned.lower().startswith("cookie:"):
