@@ -33,6 +33,7 @@ from .const import (
     DOMAIN,
 )
 from .cookie_helper import get_ydl_cookie_opts
+from .view import async_ensure_audio_cached
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -215,6 +216,15 @@ class YouTubeMediaSource(MediaSource):
 
         base_url = get_url(self.hass, prefer_external=False)
         play_url = f"{base_url}/api/ytube_player/stream/{video_id}.m4a"
+
+        async def _precache() -> None:
+            try:
+                await async_ensure_audio_cached(self.hass, video_id)
+            except Exception as err:
+                _LOGGER.debug("Background pre-cache failed for %s: %s", video_id, err)
+
+        if hasattr(self.hass, "async_create_task"):
+            self.hass.async_create_task(_precache())
 
         return PlayMedia(url=play_url, mime_type="audio/mp4")
 

@@ -1,4 +1,4 @@
-"""HTTP View for proxying YouTube audio streams to media players."""
+"""HTTP View for serving cached YouTube audio streams to media players."""
 
 from __future__ import annotations
 
@@ -14,7 +14,6 @@ from typing import Any
 from aiohttp import web
 from homeassistant.components.http import HomeAssistantView
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.aiohttp_client import async_get_clientsession
 import yt_dlp
 
 from .const import CONF_AUDIO_FORMAT, CONF_COOKIES, DEFAULT_AUDIO_FORMAT, DOMAIN
@@ -22,10 +21,7 @@ from .cookie_helper import get_ydl_cookie_opts
 
 _LOGGER = logging.getLogger(__name__)
 
-# In-memory cache for resolved stream info: video_id -> (expire_time, info_dict)
-_STREAM_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
 _DOWNLOAD_LOCKS: dict[str, asyncio.Lock] = {}
-CACHE_TTL = 900  # 15 minutes
 MAX_CACHED_FILES = 10
 AUDIO_EXTS = (".m4a", ".mp3", ".webm", ".mp4", ".ogg", ".opus")
 JSLESS_CLIENTS = ["visionos"]
@@ -66,7 +62,7 @@ def _get_js_runtime_opts() -> dict[str, dict[str, str]]:
 
 
 def _log_runtime_diagnostics(video_id: str) -> None:
-    """Log yt-dlp environment details when all stream/download attempts fail."""
+    """Log yt-dlp environment details when download attempts fail."""
     yt_dlp_ver = getattr(getattr(yt_dlp, "version", None), "__version__", "unknown")
     try:
         import yt_dlp.dependencies as ydl_deps
@@ -76,7 +72,7 @@ def _log_runtime_diagnostics(video_id: str) -> None:
     except Exception:
         ejs_ver = "unknown"
     _LOGGER.error(
-        "All attempts to stream or download YouTube audio failed for %s "
+        "All attempts to download YouTube audio failed for %s "
         "(yt-dlp=%s, ejs=%s, js_runtimes=%s, ffmpeg=%s)",
         video_id,
         yt_dlp_ver,
@@ -87,8 +83,7 @@ def _log_runtime_diagnostics(video_id: str) -> None:
 
 
 def clear_stream_cache() -> None:
-    """Clear the in-memory stream URL cache."""
-    _STREAM_CACHE.clear()
+    """Lifecycle hook kept for entry reload compatibility."""
 
 
 class _YtdlpLogger:
@@ -161,8 +156,130 @@ def _cleanup_cache(cache_dir: str, max_files: int = MAX_CACHED_FILES) -> None:
                 pass
 
 
+def _get_entry_config(hass: HomeAssistant) -> tuple[str | None, str]:
+    """Get configured cookies and audio format from hass.data."""
+    domain_data = hass.data.get(DOMAIN, {})
+    entry_data: dict[str, Any] = {}
+    for entry in domain_data.values():
+        if isinstance(entry, dict):
+            entry_data = entry
+            break
+    cookie_str = entry_data.get(CONF_COOKIES)
+    audio_format = entry_data.get(CONF_AUDIO_FORMAT, DEFAULT_AUDIO_FORMAT)
+    return cookie_str, audio_format
+
+
+def _build_ydl_opts(
+    hass: HomeAssistant,
+    cookie_str: str | None,
+    audio_format: str,
+    *,
+    use_cookies: bool,
+    player_clients: list[str] | None,
+    extra_opts: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Assemble common yt-dlp options including cookies, clients, and JS runtime."""
+    ydl_opts: dict[str, Any] = {
+        "quiet": True,
+        "no_warnings": False,
+        "logger": _YtdlpLogger(),
+        "format": audio_format,
+        "noplaylist": True,
+        "remote_components": ["ejs:github"],
+    }
+    if js_runtimes := _get_js_runtime_opts():
+        ydl_opts["js_runtimes"] = js_runtimes
+    if use_cookies and cookie_str:
+        ydl_opts.update(get_ydl_cookie_opts(hass, cookie_str))
+    if player_clients:
+        ydl_opts["extractor_args"] = {"youtube": {"player_client": player_clients}}
+    if extra_opts:
+        ydl_opts.update(extra_opts)
+    return ydl_opts
+
+
+async def async_ensure_audio_cached(
+    hass: HomeAssistant,
+    video_id: str,
+) -> tuple[str, str] | None:
+    """Download and cache the audio file for video_id using yt-dlp if not already cached."""
+    cache_dir = _get_cache_dir(hass)
+    cached = await hass.async_add_executor_job(_find_cached_file, cache_dir, video_id)
+    if cached:
+        return cached
+
+    lock = _DOWNLOAD_LOCKS.setdefault(video_id, asyncio.Lock())
+    async with lock:
+        cached = await hass.async_add_executor_job(_find_cached_file, cache_dir, video_id)
+        if cached:
+            return cached
+
+        cookie_str, audio_format = _get_entry_config(hass)
+
+        def _run_download(
+            use_cookies: bool,
+            player_clients: list[str] | None,
+            fmt: str,
+            postprocessors: list[dict[str, str]] | None,
+        ) -> tuple[str, str] | None:
+            os.makedirs(cache_dir, exist_ok=True)
+            _cleanup_cache(cache_dir)
+            outtmpl = os.path.join(cache_dir, f"{video_id}.%(ext)s")
+            extra_opts: dict[str, Any] = {"outtmpl": outtmpl, "overwrites": True}
+            if postprocessors:
+                extra_opts["postprocessors"] = postprocessors
+            ydl_opts = _build_ydl_opts(
+                hass,
+                cookie_str,
+                fmt,
+                use_cookies=use_cookies,
+                player_clients=player_clients,
+                extra_opts=extra_opts,
+            )
+
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                try:
+                    ydl.download([f"https://www.youtube.com/watch?v={video_id}"])
+                    return _find_cached_file(cache_dir, video_id)
+                except Exception as err:
+                    _LOGGER.warning(
+                        "yt-dlp download failed for %s (cookies=%s, clients=%s, format=%s): %s",
+                        video_id,
+                        use_cookies,
+                        player_clients,
+                        fmt,
+                        err,
+                    )
+                    return None
+
+        has_ffmpeg = bool(shutil.which("ffmpeg"))
+        m4a_pp = (
+            [{"key": "FFmpegExtractAudio", "preferredcodec": "m4a"}]
+            if has_ffmpeg
+            else None
+        )
+        attempts: list[tuple[bool, list[str] | None, str, list[dict[str, str]] | None]] = []
+        if cookie_str:
+            attempts.append((True, None, audio_format, None))
+        attempts.append((False, JSLESS_CLIENTS, audio_format, None))
+        attempts.append((False, None, audio_format, None))
+        if has_ffmpeg and audio_format != "bestaudio/best":
+            if cookie_str:
+                attempts.append((True, None, "bestaudio/best", m4a_pp))
+            attempts.append((False, JSLESS_CLIENTS, "bestaudio/best", m4a_pp))
+
+        for use_cookies, clients, fmt, postprocessors in attempts:
+            result = await hass.async_add_executor_job(
+                _run_download, use_cookies, clients, fmt, postprocessors
+            )
+            if result:
+                return result
+
+        return None
+
+
 class YouTubeStreamView(HomeAssistantView):
-    """View to proxy audio streams from YouTube."""
+    """View to serve locally cached YouTube audio streams."""
 
     url = "/api/ytube_player/stream/{video_id}"
     name = "api:ytube_player:stream"
@@ -180,18 +297,6 @@ class YouTubeStreamView(HomeAssistantView):
                 return cleaned[: -len(ext)]
         return cleaned
 
-    def _get_entry_config(self) -> tuple[str | None, str]:
-        """Get configured cookies and audio format."""
-        domain_data = self.hass.data.get(DOMAIN, {})
-        entry_data: dict[str, Any] = {}
-        for entry in domain_data.values():
-            if isinstance(entry, dict):
-                entry_data = entry
-                break
-        cookie_str = entry_data.get(CONF_COOKIES)
-        audio_format = entry_data.get(CONF_AUDIO_FORMAT, DEFAULT_AUDIO_FORMAT)
-        return cookie_str, audio_format
-
     async def head(self, request: web.Request, video_id: str) -> web.Response:
         """Handle pre-flight HEAD requests from smart speakers like Sonos."""
         clean_id = self._clean_video_id(video_id)
@@ -205,209 +310,8 @@ class YouTubeStreamView(HomeAssistantView):
             headers["Content-Length"] = str(os.path.getsize(cached[0]))
         return web.Response(status=200, headers=headers)
 
-    def _build_ydl_opts(
-        self,
-        cookie_str: str | None,
-        audio_format: str,
-        *,
-        use_cookies: bool,
-        player_clients: list[str] | None,
-        extra_opts: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
-        """Assemble common yt-dlp options including cookies, clients, and JS runtime."""
-        ydl_opts: dict[str, Any] = {
-            "quiet": True,
-            "no_warnings": False,
-            "logger": _YtdlpLogger(),
-            "format": audio_format,
-            "noplaylist": True,
-            "remote_components": ["ejs:github"],
-        }
-        if js_runtimes := _get_js_runtime_opts():
-            ydl_opts["js_runtimes"] = js_runtimes
-        if use_cookies and cookie_str:
-            ydl_opts.update(get_ydl_cookie_opts(self.hass, cookie_str))
-        if player_clients:
-            ydl_opts["extractor_args"] = {"youtube": {"player_client": player_clients}}
-        if extra_opts:
-            ydl_opts.update(extra_opts)
-        return ydl_opts
-
-    async def _extract_info(
-        self,
-        video_id: str,
-        cookie_str: str | None,
-        audio_format: str,
-        *,
-        use_cookies: bool = True,
-        player_clients: list[str] | None = None,
-    ) -> dict[str, Any] | None:
-        """Extract stream info using yt-dlp."""
-        def _extract() -> dict[str, Any] | None:
-            ydl_opts = self._build_ydl_opts(
-                cookie_str,
-                audio_format,
-                use_cookies=use_cookies,
-                player_clients=player_clients,
-                extra_opts={"skip_download": True},
-            )
-
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                try:
-                    return ydl.extract_info(
-                        f"https://www.youtube.com/watch?v={video_id}",
-                        download=False,
-                    )
-                except Exception as err:
-                    _LOGGER.warning(
-                        "yt-dlp extraction failed for %s (cookies=%s, clients=%s): %s",
-                        video_id,
-                        use_cookies,
-                        player_clients,
-                        err,
-                    )
-                    return None
-
-        return await self.hass.async_add_executor_job(_extract)
-
-    async def _try_stream_upstream(
-        self,
-        request: web.Request,
-        video_id: str,
-        info: dict[str, Any],
-    ) -> web.StreamResponse | None:
-        """Attempt to stream a direct HTTP(S) media URL through aiohttp."""
-        direct_url = info.get("url")
-        protocol = info.get("protocol", "")
-        if not direct_url or protocol not in ("http", "https"):
-            _LOGGER.debug(
-                "Skipping direct stream for %s: protocol=%s", video_id, protocol
-            )
-            return None
-
-        mime_type = _mime_for_ext(info.get("ext"))
-
-        # Use yt-dlp's own headers + Accept-Encoding: identity; do NOT leak .youtube.com cookies to googlevideo.com
-        upstream_headers: dict[str, str] = {"Accept-Encoding": "identity"}
-        if info.get("http_headers"):
-            upstream_headers.update(info["http_headers"])
-
-        if "range" in request.headers:
-            upstream_headers["Range"] = request.headers["range"]
-
-        session = async_get_clientsession(self.hass)
-        try:
-            async with session.get(direct_url, headers=upstream_headers) as upstream_resp:
-                if upstream_resp.status >= 400:
-                    _LOGGER.warning(
-                        "Upstream YouTube CDN returned HTTP %s for %s (format=%s, protocol=%s)",
-                        upstream_resp.status,
-                        video_id,
-                        info.get("format_id"),
-                        protocol,
-                    )
-                    return None
-
-                response = web.StreamResponse(
-                    status=upstream_resp.status,
-                    headers={
-                        "Content-Type": mime_type,
-                        "Accept-Ranges": "bytes",
-                    },
-                )
-                if "Content-Length" in upstream_resp.headers:
-                    response.headers["Content-Length"] = upstream_resp.headers["Content-Length"]
-                if "Content-Range" in upstream_resp.headers:
-                    response.headers["Content-Range"] = upstream_resp.headers["Content-Range"]
-
-                await response.prepare(request)
-
-                async for chunk in upstream_resp.content.iter_chunked(64 * 1024):
-                    await response.write(chunk)
-
-                await response.write_eof()
-                return response
-        except Exception as err:
-            _LOGGER.warning("Upstream stream error for %s: %s", video_id, err)
-            return None
-
-    async def _download_with_ytdlp(
-        self,
-        video_id: str,
-        cookie_str: str | None,
-        audio_format: str,
-    ) -> tuple[str, str] | None:
-        """Download audio track using yt-dlp native downloader to local cache."""
-        lock = _DOWNLOAD_LOCKS.setdefault(video_id, asyncio.Lock())
-        async with lock:
-            cache_dir = _get_cache_dir(self.hass)
-            cached = await self.hass.async_add_executor_job(_find_cached_file, cache_dir, video_id)
-            if cached:
-                return cached
-
-            def _run_download(
-                use_cookies: bool,
-                player_clients: list[str] | None,
-                fmt: str,
-                postprocessors: list[dict[str, str]] | None,
-            ) -> tuple[str, str] | None:
-                os.makedirs(cache_dir, exist_ok=True)
-                _cleanup_cache(cache_dir)
-                outtmpl = os.path.join(cache_dir, f"{video_id}.%(ext)s")
-                extra_opts: dict[str, Any] = {"outtmpl": outtmpl, "overwrites": True}
-                if postprocessors:
-                    extra_opts["postprocessors"] = postprocessors
-                ydl_opts = self._build_ydl_opts(
-                    cookie_str,
-                    fmt,
-                    use_cookies=use_cookies,
-                    player_clients=player_clients,
-                    extra_opts=extra_opts,
-                )
-
-                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    try:
-                        ydl.download([f"https://www.youtube.com/watch?v={video_id}"])
-                        return _find_cached_file(cache_dir, video_id)
-                    except Exception as err:
-                        _LOGGER.warning(
-                            "yt-dlp download failed for %s (cookies=%s, clients=%s, format=%s): %s",
-                            video_id,
-                            use_cookies,
-                            player_clients,
-                            fmt,
-                            err,
-                        )
-                        return None
-
-            # Try configured format first, then fallback to bestaudio transcoded to m4a via ffmpeg
-            has_ffmpeg = bool(shutil.which("ffmpeg"))
-            m4a_pp = (
-                [{"key": "FFmpegExtractAudio", "preferredcodec": "m4a"}]
-                if has_ffmpeg
-                else None
-            )
-            attempts: list[tuple[bool, list[str] | None, str, list[dict[str, str]] | None]] = []
-            if cookie_str:
-                attempts.append((True, None, audio_format, None))
-            attempts.append((False, None, audio_format, None))
-            attempts.append((False, JSLESS_CLIENTS, audio_format, None))
-            if has_ffmpeg and audio_format != "bestaudio/best":
-                if cookie_str:
-                    attempts.append((True, None, "bestaudio/best", m4a_pp))
-                attempts.append((False, JSLESS_CLIENTS, "bestaudio/best", m4a_pp))
-
-            for use_cookies, clients, fmt, postprocessors in attempts:
-                result = await self.hass.async_add_executor_job(
-                    _run_download, use_cookies, clients, fmt, postprocessors
-                )
-                if result:
-                    return result
-
-            return None
-
     async def get(self, request: web.Request, video_id: str) -> web.StreamResponse:
-        """Stream the audio for the given video_id."""
+        """Serve the audio for the given video_id."""
         if not video_id:
             return web.Response(status=400, text="Missing video_id")
 
@@ -415,9 +319,7 @@ class YouTubeStreamView(HomeAssistantView):
         if not re.match(r"^[a-zA-Z0-9_-]{1,64}$", video_id):
             return web.Response(status=400, text="Invalid video_id")
 
-        # 1. Serve immediately if already cached locally
-        cache_dir = _get_cache_dir(self.hass)
-        cached_file = await self.hass.async_add_executor_job(_find_cached_file, cache_dir, video_id)
+        cached_file = await async_ensure_audio_cached(self.hass, video_id)
         if cached_file:
             file_path, ext = cached_file
             return web.FileResponse(
@@ -425,49 +327,5 @@ class YouTubeStreamView(HomeAssistantView):
                 headers={"Content-Type": _mime_for_ext(ext)},
             )
 
-        cookie_str, audio_format = self._get_entry_config()
-
-        # 2. Try direct streaming with cached or freshly extracted info
-        now = time.time()
-        cached_info = _STREAM_CACHE.get(video_id)
-        info = cached_info[1] if cached_info and cached_info[0] > now else None
-
-        if not info:
-            info = await self._extract_info(
-                video_id, cookie_str, audio_format, use_cookies=bool(cookie_str)
-            )
-            if info:
-                _STREAM_CACHE[video_id] = (now + CACHE_TTL, info)
-
-        if info:
-            streamed = await self._try_stream_upstream(request, video_id, info)
-            if streamed is not None:
-                return streamed
-            # Cached URL failed (e.g. 403 or non-https); invalidate cache
-            _STREAM_CACHE.pop(video_id, None)
-
-        # 3. Retry direct streaming with JS-less clients without cookies (avoids missing JS runtime 403)
-        fallback_info = await self._extract_info(
-            video_id,
-            cookie_str,
-            audio_format,
-            use_cookies=False,
-            player_clients=JSLESS_CLIENTS,
-        )
-        if fallback_info:
-            streamed = await self._try_stream_upstream(request, video_id, fallback_info)
-            if streamed is not None:
-                _STREAM_CACHE[video_id] = (now + CACHE_TTL, fallback_info)
-                return streamed
-
-        # 4. Fallback to yt-dlp native download (handles HLS/DASH/retries) and serve FileResponse
-        downloaded = await self._download_with_ytdlp(video_id, cookie_str, audio_format)
-        if downloaded:
-            file_path, ext = downloaded
-            return web.FileResponse(
-                file_path,
-                headers={"Content-Type": _mime_for_ext(ext)},
-            )
-
         _log_runtime_diagnostics(video_id)
-        return web.Response(status=502, text="Could not stream or download audio from YouTube")
+        return web.Response(status=502, text="Could not download audio from YouTube")
