@@ -37,6 +37,43 @@ from .view import async_ensure_audio_cached
 
 _LOGGER = logging.getLogger(__name__)
 
+_VIDEO_ID_RE = re.compile(r"^[a-zA-Z0-9_-]{11}$")
+_UNPLAYABLE_LIVE_STATUSES = frozenset({"is_live", "is_upcoming", "post_live"})
+
+
+def _is_playable_video_entry(entry: Any) -> bool:
+    """Return True if a flat yt-dlp search entry is a playable single VOD video."""
+    if not isinstance(entry, dict):
+        return False
+
+    entry_id = entry.get("id")
+    if not isinstance(entry_id, str) or not _VIDEO_ID_RE.match(entry_id):
+        return False
+
+    if entry.get("_type") in ("playlist", "multi_video"):
+        return False
+
+    ie_key = entry.get("ie_key")
+    if ie_key is not None and ie_key != "Youtube":
+        return False
+
+    url = entry.get("url")
+    if isinstance(url, str) and (
+        "/playlist" in url
+        or "/channel/" in url
+        or "/hashtag/" in url
+        or "list=" in url
+    ):
+        return False
+
+    if entry.get("is_live") is True:
+        return False
+
+    if entry.get("live_status") in _UNPLAYABLE_LIVE_STATUSES:
+        return False
+
+    return True
+
 
 def extract_youtube_video_id(url_or_id: str) -> str | None:
     """Extract YouTube 11-char video ID from URL or string if present."""
@@ -46,7 +83,7 @@ def extract_youtube_video_id(url_or_id: str) -> str | None:
             url_or_id = url_or_id[:-len(ext)]
             break
 
-    if re.match(r"^[a-zA-Z0-9_-]{11}$", url_or_id):
+    if _VIDEO_ID_RE.match(url_or_id):
         return url_or_id
 
     parsed = urlparse(url_or_id)
@@ -62,7 +99,7 @@ def extract_youtube_video_id(url_or_id: str) -> str | None:
                 return parts[1]
     elif "youtu.be" in parsed.netloc:
         video_id = parsed.path.strip("/")
-        if re.match(r"^[a-zA-Z0-9_-]{11}$", video_id):
+        if _VIDEO_ID_RE.match(video_id):
             return video_id
 
     return None
@@ -124,6 +161,42 @@ class YouTubeMediaSource(MediaSource):
             children=[],
         )
 
+    def _search_playable_videos(self, search_str: str, limit: int) -> list[dict[str, Any]]:
+        """Search YouTube and return up to limit playable single VOD videos."""
+        opts = self._get_ydl_options({"extract_flat": True})
+        fetch_limit = min(max(limit * 2, 10), 50)
+        search_url = f"ytsearch{fetch_limit}:{search_str}"
+        results: list[dict[str, Any]] = []
+
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            try:
+                info = ydl.extract_info(search_url, download=False)
+                if not info or "entries" not in info:
+                    return results
+                for entry in info["entries"]:
+                    if not _is_playable_video_entry(entry):
+                        continue
+                    thumb = None
+                    thumbnails = entry.get("thumbnails")
+                    if isinstance(thumbnails, list) and thumbnails:
+                        thumb = thumbnails[-1].get("url")
+                    elif entry.get("thumbnail"):
+                        thumb = entry.get("thumbnail")
+
+                    results.append(
+                        {
+                            "id": entry["id"],
+                            "title": entry.get("title", "Unknown"),
+                            "thumbnail": thumb,
+                        }
+                    )
+                    if len(results) >= limit:
+                        break
+            except Exception as err:
+                _LOGGER.error("Failed to search YouTube with query '%s': %s", search_str, err)
+
+        return results
+
     async def async_search_media(
         self, item: MediaSourceItem, query: SearchMediaQuery | str
     ) -> SearchMedia:
@@ -140,39 +213,9 @@ class YouTubeMediaSource(MediaSource):
         config = self._get_config_options()
         max_results = config.get(CONF_MAX_SEARCH_RESULTS, DEFAULT_MAX_SEARCH_RESULTS)
 
-        def _search() -> list[dict[str, Any]]:
-            opts = self._get_ydl_options({"extract_flat": True})
-            search_url = f"ytsearch{max_results}:{search_str}"
-            results: list[dict[str, Any]] = []
-
-            with yt_dlp.YoutubeDL(opts) as ydl:
-                try:
-                    info = ydl.extract_info(search_url, download=False)
-                    if not info or "entries" not in info:
-                        return results
-                    for entry in info["entries"]:
-                        if not entry or not entry.get("id"):
-                            continue
-                        thumb = None
-                        thumbnails = entry.get("thumbnails")
-                        if isinstance(thumbnails, list) and thumbnails:
-                            thumb = thumbnails[-1].get("url")
-                        elif entry.get("thumbnail"):
-                            thumb = entry.get("thumbnail")
-
-                        results.append(
-                            {
-                                "id": entry["id"],
-                                "title": entry.get("title", "Unknown"),
-                                "thumbnail": thumb,
-                            }
-                        )
-                except Exception as err:
-                    _LOGGER.error("Failed to search YouTube with query '%s': %s", search_str, err)
-
-            return results
-
-        video_entries = await self.hass.async_add_executor_job(_search)
+        video_entries = await self.hass.async_add_executor_job(
+            self._search_playable_videos, search_str, max_results
+        )
 
         items: list[BrowseMediaSource] = []
         for v in video_entries:
@@ -229,24 +272,12 @@ class YouTubeMediaSource(MediaSource):
         return PlayMedia(url=play_url, mime_type="audio/mp4")
 
     async def _async_search_first_video_id(self, query: str) -> str | None:
-        """Search YouTube for the first video matching the query and return its video ID."""
-        if not query.strip():
+        """Search YouTube for the first playable video matching the query and return its ID."""
+        cleaned = query.strip()
+        if not cleaned:
             return None
 
-        def _search_first() -> str | None:
-            opts = self._get_ydl_options({"extract_flat": True})
-            search_url = f"ytsearch1:{query}"
-            with yt_dlp.YoutubeDL(opts) as ydl:
-                try:
-                    info = ydl.extract_info(search_url, download=False)
-                    if not info or "entries" not in info:
-                        return None
-                    entries = [e for e in info["entries"] if e]
-                    if not entries:
-                        return None
-                    return entries[0].get("id")
-                except Exception as err:
-                    _LOGGER.error("Failed to search first video for query '%s': %s", query, err)
-                    return None
-
-        return await self.hass.async_add_executor_job(_search_first)
+        entries = await self.hass.async_add_executor_job(
+            self._search_playable_videos, cleaned, 1
+        )
+        return entries[0]["id"] if entries else None
