@@ -258,15 +258,19 @@ async def async_ensure_audio_cached(
             if has_ffmpeg
             else None
         )
-        attempts: list[tuple[bool, list[str] | None, str, list[dict[str, str]] | None]] = []
+        # Prefer JS-less public client first to avoid logged-in PO Token 403s on normal videos;
+        # fall back to default unauthenticated clients, cookies (for restricted/member videos),
+        # and ffmpeg transcoding.
+        attempts: list[tuple[bool, list[str] | None, str, list[dict[str, str]] | None]] = [
+            (False, JSLESS_CLIENTS, audio_format, None),
+            (False, None, audio_format, None),
+        ]
         if cookie_str:
             attempts.append((True, None, audio_format, None))
-        attempts.append((False, JSLESS_CLIENTS, audio_format, None))
-        attempts.append((False, None, audio_format, None))
         if has_ffmpeg and audio_format != "bestaudio/best":
+            attempts.append((False, JSLESS_CLIENTS, "bestaudio/best", m4a_pp))
             if cookie_str:
                 attempts.append((True, None, "bestaudio/best", m4a_pp))
-            attempts.append((False, JSLESS_CLIENTS, "bestaudio/best", m4a_pp))
 
         for use_cookies, clients, fmt, postprocessors in attempts:
             result = await hass.async_add_executor_job(
