@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="brands/logo.png" alt="YouTube Player Logo" width="480">
+  <img src="custom_components/ytube_player/brand/logo.png" alt="YouTube Player Logo" width="480">
 </p>
 
 # YouTube Player for Home Assistant
