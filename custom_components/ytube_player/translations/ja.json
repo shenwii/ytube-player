@@ -22,5 +22,21 @@
         }
       }
     }
+  },
+  "services": {
+    "search": {
+      "name": "YouTube を検索",
+      "description": "再生可能な YouTube 音声を検索し、media_content_id を含む結果一覧を返します。",
+      "fields": {
+        "query": {
+          "name": "検索キーワード",
+          "description": "アーティスト名、曲名、番組名などのキーワード。"
+        },
+        "limit": {
+          "name": "最大件数",
+          "description": "返す検索結果の最大件数（省略時はインテグレーション設定値）。"
+        }
+      }
+    }
   }
 }

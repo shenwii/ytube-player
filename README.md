@@ -102,6 +102,24 @@ data:
   media_content_type: music
 ```
 
+### 3. Using with MCP (`ha-mcp`), AI Agents, or Search-and-Pick Scripts
+
+Because `ytube_player` is a `MediaSource` integration (not a `media_player` entity), standard `media_player.search_media` or built-in voice intents will not query it automatically. Depending on your workflow, use either approach below:
+
+- **Method 1: Instant Search & Play (Recommended for `ha-mcp` / Direct Playback)**
+  Have your AI agent or script call `media_player.play_media` directly with `media_content_id: "media-source://ytube_player/search?q=<keywords>"` and `media_content_type: "music"`. It will automatically play the first playable match.
+
+- **Method 2: Search First, Then Pick & Play (`ytube_player.search` or `browse_media`)**
+  Call the `ytube_player.search` service action (which returns response data containing `id`, `title`, `media_content_id`, `url`, and `thumbnail` for each matching track), let the AI or script choose a track, and pass its `media_content_id` to `media_player.play_media`:
+  ```yaml
+  action: ytube_player.search
+  data:
+    query: "Lofi Hip Hop"
+    limit: 5
+  response_variable: yt_results
+  ```
+  *(You can also browse search results via `media_player.browse_media` using `media_content_id: "media-source://ytube_player/search?q=Lofi Hip Hop"`.)*
+
 ---
 
 ## ⚠️ Limitations & Scope

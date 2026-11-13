@@ -102,6 +102,24 @@ data:
   media_content_type: music
 ```
 
+### 3. 在 MCP（如 `ha-mcp`）/ AI 助手 / 选播脚本中使用
+
+由于本插件属于 `MediaSource`（媒体源）而非 `media_player` 实体，Home Assistant 原生的 `media_player.search_media` 或内置语音搜索不会自动查到本插件。可按需求选择以下两种方式：
+
+- **方式一：直搜即播（推荐用于 `ha-mcp` 等可直接调用 HA 服务的 MCP）**
+  让 AI 直接调用 `media_player.play_media` 服务，将 `media_content_id` 设为 `"media-source://ytube_player/search?q=搜索关键词"`、`media_content_type` 设为 `"music"`，即可自动检索并播放首个可播放结果。
+
+- **方式二：先搜索列表，再选歌播放（`ytube_player.search` 服务 / `browse_media`）**
+  如果需要先拿到候选列表再选择播放，可调用本集成提供的 `ytube_player.search` 服务（返回 `id`、`title`、`media_content_id`、`url`、`thumbnail` 列表），再将选中条目的 `media_content_id` 传给 `media_player.play_media`：
+  ```yaml
+  action: ytube_player.search
+  data:
+    query: "周杰伦 晴天"
+    limit: 5
+  response_variable: yt_results
+  ```
+  *（同样支持通过 `media_player.browse_media` 传入 `media_content_id: "media-source://ytube_player/search?q=周杰伦 晴天"` 来获取子列表。）*
+
 ---
 
 ## ⚠️ 使用限制与定位说明

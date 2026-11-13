@@ -110,62 +110,82 @@ async def async_get_media_source(hass: HomeAssistant) -> YouTubeMediaSource:
     return YouTubeMediaSource(hass)
 
 
-class YouTubeMediaSource(MediaSource):
-    """Provide YouTube content as a media source."""
+def _get_entry_config(hass: HomeAssistant) -> dict[str, Any]:
+    """Retrieve stored configuration / options from hass.data."""
+    domain_data = hass.data.get(DOMAIN, {})
+    for entry in domain_data.values():
+        if isinstance(entry, dict):
+            return entry
+    return {}
 
-    name = "YouTube"
 
-    def __init__(self, hass: HomeAssistant) -> None:
-        """Initialize the YouTube media source."""
-        super().__init__(DOMAIN)
-        self.hass = hass
+def _build_ydl_search_options(
+    hass: HomeAssistant, extra_opts: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """Build standard YoutubeDL options for search queries."""
+    config = _get_entry_config(hass)
+    cookie_str = config.get(CONF_COOKIES)
+    audio_format = config.get(CONF_AUDIO_FORMAT, DEFAULT_AUDIO_FORMAT)
 
-    def _get_config_options(self) -> dict[str, Any]:
-        """Retrieve stored configuration / options."""
-        domain_data = self.hass.data.get(DOMAIN, {})
-        for entry in domain_data.values():
-            if isinstance(entry, dict):
-                return entry
-        return {}
+    opts: dict[str, Any] = {
+        "quiet": True,
+        "no_warnings": True,
+        "format": audio_format,
+        "skip_download": True,
+        "noplaylist": True,
+        "extract_flat": True,
+    }
+    opts.update(get_ydl_cookie_opts(hass, cookie_str))
+    if extra_opts:
+        opts.update(extra_opts)
+    return opts
 
-    def _get_ydl_options(self, extra_opts: dict[str, Any] | None = None) -> dict[str, Any]:
-        """Build standard options for YoutubeDL."""
-        config = self._get_config_options()
-        cookie_str = config.get(CONF_COOKIES)
-        audio_format = config.get(CONF_AUDIO_FORMAT, DEFAULT_AUDIO_FORMAT)
 
-        opts: dict[str, Any] = {
-            "quiet": True,
-            "no_warnings": True,
-            "format": audio_format,
-            "skip_download": True,
-            "noplaylist": True,
-            "extract_flat": False,
-        }
-        opts.update(get_ydl_cookie_opts(self.hass, cookie_str))
-        if extra_opts:
-            opts.update(extra_opts)
-        return opts
+def _extract_search_query(raw_identifier: str) -> str | None:
+    """Extract search query from search?q=... or search/... identifiers."""
+    if raw_identifier.startswith("search?q="):
+        return raw_identifier[9:].strip()
+    if raw_identifier.startswith("search/"):
+        return raw_identifier[7:].strip()
+    return None
 
-    async def async_browse_media(self, item: MediaSourceItem) -> BrowseMediaSource:
-        """Return root browse media item enabling search."""
-        return BrowseMediaSource(
+
+def _build_track_browse_items(video_entries: list[dict[str, Any]]) -> list[BrowseMediaSource]:
+    """Convert search result dicts into playable BrowseMediaSource items."""
+    return [
+        BrowseMediaSource(
             domain=DOMAIN,
-            identifier="",
-            media_class=MediaClass.DIRECTORY,
+            identifier=v["id"],
+            media_class=MediaClass.TRACK,
             media_content_type=MediaType.MUSIC,
-            title="YouTube",
-            can_play=False,
-            can_expand=True,
-            can_search=True,
-            children=[],
+            title=v["title"],
+            can_play=True,
+            can_expand=False,
+            thumbnail=v.get("thumbnail"),
         )
+        for v in video_entries
+    ]
 
-    def _search_playable_videos(self, search_str: str, limit: int) -> list[dict[str, Any]]:
-        """Search YouTube and return up to limit playable single VOD videos."""
-        opts = self._get_ydl_options({"extract_flat": True})
+
+async def async_search_playable_videos(
+    hass: HomeAssistant,
+    search_str: str,
+    limit: int | None = None,
+) -> list[dict[str, Any]]:
+    """Search YouTube and return up to limit playable single VOD videos."""
+    cleaned = search_str.strip()
+    if not cleaned:
+        return []
+
+    if limit is None:
+        config = _get_entry_config(hass)
+        limit = int(config.get(CONF_MAX_SEARCH_RESULTS, DEFAULT_MAX_SEARCH_RESULTS))
+    limit = max(1, min(int(limit), 50))
+
+    def _search() -> list[dict[str, Any]]:
+        opts = _build_ydl_search_options(hass)
         fetch_limit = min(max(limit * 2, 10), 50)
-        search_url = f"ytsearch{fetch_limit}:{search_str}"
+        search_url = f"ytsearch{fetch_limit}:{cleaned}"
         results: list[dict[str, Any]] = []
 
         with yt_dlp.YoutubeDL(opts) as ydl:
@@ -183,19 +203,79 @@ class YouTubeMediaSource(MediaSource):
                     elif entry.get("thumbnail"):
                         thumb = entry.get("thumbnail")
 
+                    video_id = entry["id"]
                     results.append(
                         {
-                            "id": entry["id"],
+                            "id": video_id,
                             "title": entry.get("title", "Unknown"),
                             "thumbnail": thumb,
+                            "media_content_id": f"media-source://{DOMAIN}/{video_id}",
+                            "url": f"https://www.youtube.com/watch?v={video_id}",
                         }
                     )
                     if len(results) >= limit:
                         break
             except Exception as err:
-                _LOGGER.error("Failed to search YouTube with query '%s': %s", search_str, err)
+                _LOGGER.error("Failed to search YouTube with query '%s': %s", cleaned, err)
 
         return results
+
+    return await hass.async_add_executor_job(_search)
+
+
+class YouTubeMediaSource(MediaSource):
+    """Provide YouTube content as a media source."""
+
+    name = "YouTube"
+
+    def __init__(self, hass: HomeAssistant) -> None:
+        """Initialize the YouTube media source."""
+        super().__init__(DOMAIN)
+        self.hass = hass
+
+    async def async_browse_media(self, item: MediaSourceItem) -> BrowseMediaSource:
+        """Return root browse media item or search results for search identifiers."""
+        raw_identifier = unquote(item.identifier or "").strip()
+        if not raw_identifier:
+            return BrowseMediaSource(
+                domain=DOMAIN,
+                identifier="",
+                media_class=MediaClass.DIRECTORY,
+                media_content_type=MediaType.MUSIC,
+                title="YouTube",
+                can_play=False,
+                can_expand=True,
+                can_search=True,
+                children=[],
+            )
+
+        search_query = _extract_search_query(raw_identifier)
+        if search_query is None:
+            video_id = extract_youtube_video_id(raw_identifier)
+            if video_id:
+                return BrowseMediaSource(
+                    domain=DOMAIN,
+                    identifier=video_id,
+                    media_class=MediaClass.TRACK,
+                    media_content_type=MediaType.MUSIC,
+                    title=video_id,
+                    can_play=True,
+                    can_expand=False,
+                )
+            search_query = raw_identifier
+
+        video_entries = await async_search_playable_videos(self.hass, search_query)
+        return BrowseMediaSource(
+            domain=DOMAIN,
+            identifier=raw_identifier,
+            media_class=MediaClass.DIRECTORY,
+            media_content_type=MediaType.MUSIC,
+            title=f"YouTube: {search_query}",
+            can_play=False,
+            can_expand=True,
+            can_search=True,
+            children=_build_track_browse_items(video_entries),
+        )
 
     async def async_search_media(
         self, item: MediaSourceItem, query: SearchMediaQuery | str
@@ -206,33 +286,8 @@ class YouTubeMediaSource(MediaSource):
         else:
             search_str = str(query)
 
-        search_str = search_str.strip()
-        if not search_str:
-            return SearchMedia(result=[])
-
-        config = self._get_config_options()
-        max_results = config.get(CONF_MAX_SEARCH_RESULTS, DEFAULT_MAX_SEARCH_RESULTS)
-
-        video_entries = await self.hass.async_add_executor_job(
-            self._search_playable_videos, search_str, max_results
-        )
-
-        items: list[BrowseMediaSource] = []
-        for v in video_entries:
-            items.append(
-                BrowseMediaSource(
-                    domain=DOMAIN,
-                    identifier=v["id"],
-                    media_class=MediaClass.TRACK,
-                    media_content_type=MediaType.MUSIC,
-                    title=v["title"],
-                    can_play=True,
-                    can_expand=False,
-                    thumbnail=v.get("thumbnail"),
-                )
-            )
-
-        return SearchMedia(result=items)
+        video_entries = await async_search_playable_videos(self.hass, search_str)
+        return SearchMedia(result=_build_track_browse_items(video_entries))
 
     async def async_resolve_media(self, item: MediaSourceItem) -> PlayMedia:
         """Resolve a media item identifier into a local proxy audio stream URL."""
@@ -240,12 +295,8 @@ class YouTubeMediaSource(MediaSource):
         if not raw_identifier:
             raise Unresolvable("No media identifier provided")
 
-        # Check if it starts with search prefixes
-        if raw_identifier.startswith("search?q="):
-            search_query = raw_identifier[9:].strip()
-            video_id = await self._async_search_first_video_id(search_query)
-        elif raw_identifier.startswith("search/"):
-            search_query = raw_identifier[7:].strip()
+        search_query = _extract_search_query(raw_identifier)
+        if search_query is not None:
             video_id = await self._async_search_first_video_id(search_query)
         else:
             # Check if it is an explicit video ID or YouTube URL
@@ -273,11 +324,5 @@ class YouTubeMediaSource(MediaSource):
 
     async def _async_search_first_video_id(self, query: str) -> str | None:
         """Search YouTube for the first playable video matching the query and return its ID."""
-        cleaned = query.strip()
-        if not cleaned:
-            return None
-
-        entries = await self.hass.async_add_executor_job(
-            self._search_playable_videos, cleaned, 1
-        )
+        entries = await async_search_playable_videos(self.hass, query, limit=1)
         return entries[0]["id"] if entries else None

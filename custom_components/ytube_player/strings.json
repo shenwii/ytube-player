@@ -22,5 +22,21 @@
         }
       }
     }
+  },
+  "services": {
+    "search": {
+      "name": "Search YouTube",
+      "description": "Search YouTube for playable audio tracks and return matching items with media_content_id.",
+      "fields": {
+        "query": {
+          "name": "Query",
+          "description": "Search keywords (artist, song title, podcast, etc.)."
+        },
+        "limit": {
+          "name": "Limit",
+          "description": "Maximum number of results to return."
+        }
+      }
+    }
   }
 }
