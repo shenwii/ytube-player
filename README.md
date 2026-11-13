@@ -105,6 +105,13 @@ data:
 
 ---
 
+## ⚠️ Limitations
+
+- **No Live Streams or 24/7 Radios**: To ensure reliable playback on smart speakers (such as Sonos, HomePod, and DLNA) that require `Content-Length` and byte-range requests (`Accept-Ranges`), audio streams are downloaded and cached locally before playback. Live streams, 24/7 radio broadcasts, and upcoming premieres cannot be played and are **automatically excluded from search results** (past live VODs that have already ended are supported).
+- **No Playlists or YouTube Mixes**: Playlists, YouTube Mix/Radio collections, and channels are **not supported** and are automatically filtered out from search results. When using instant search & play (`search?q=...`), the integration automatically skips live streams and playlists and plays the first playable single video.
+
+---
+
 ## 🍪 How to Obtain YouTube Cookies
 
 1. In a desktop browser (Chrome, Edge, Firefox, etc.), open [YouTube](https://www.youtube.com) and log in to your account.
