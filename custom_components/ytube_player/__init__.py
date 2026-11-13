@@ -9,7 +9,7 @@ from homeassistant.core import HomeAssistant
 
 from .const import CONF_COOKIES, DOMAIN
 from .cookie_helper import get_cookie_file_path, sync_save_cookie_file
-from .view import YouTubeStreamView
+from .view import YouTubeStreamView, clear_stream_cache
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -35,6 +35,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     # Register update listener
     entry.async_on_unload(entry.add_update_listener(async_reload_entry))
+    clear_stream_cache()
 
     return True
 
@@ -42,6 +43,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
     hass.data[DOMAIN].pop(entry.entry_id, None)
+    clear_stream_cache()
     return True
 
 
